@@ -20,6 +20,8 @@ void *replace(void *params);
 
 void *write_file(void *params);
 
+void duplicate_file(char *dest, char *src);
+
 // Thread arguments
 typedef struct t_params {
     pthread_t tid;
@@ -45,6 +47,7 @@ int line_counter = 0;
 int upper_count = 0;
 int replace_count = 0;
 int write_count = 0;
+char *output_file;
 //char *read_lines2[20000];
 
 
@@ -65,6 +68,9 @@ int main(int argc, char *argv[]) {
     for (int j = 0; j < line_number; ++j) {
         write_ready[j] = 0;
     }
+
+    output_file = "out.txt";
+    duplicate_file(output_file, argv[2]);
 
     sem_t mutex_arr[line_number];
     for (int l = 0; l < line_number; ++l) {
@@ -133,15 +139,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    for (int k = 0; k < NUM_READ_THREADS; ++k) {
-        pthread_join(readers[k], NULL);
-    }
-    for (int n = 0; n < NUM_UPPER_THREADS; ++n) {
-        pthread_join(uppers[n], NULL);
-    }
-    for (int b = 0; b < NUM_REPLACE_THREADS; ++b) {
-        pthread_join(replacer[b], NULL);
-    }
 
 
 
@@ -162,7 +159,16 @@ int main(int argc, char *argv[]) {
         }
     }
 
-//
+    for (int k = 0; k < NUM_READ_THREADS; ++k) {
+        pthread_join(readers[k], NULL);
+    }
+    for (int n = 0; n < NUM_UPPER_THREADS; ++n) {
+        pthread_join(uppers[n], NULL);
+    }
+    for (int b = 0; b < NUM_REPLACE_THREADS; ++b) {
+        pthread_join(replacer[b], NULL);
+    }
+
     for (int l = 0; l < NUM_WRITE_THREADS; ++l) {
         pthread_join(writer[l], NULL);
     }
@@ -359,8 +365,9 @@ void *write_file(void *params) {
     t_params *t_p = (t_params *) params;
     int index;
     while (1) {
+
         sem_wait(&write_sem);
-        puts("write is started");
+
         sem_wait(&write_count_mutex);
         index = write_count;
         sem_wait(&(t_p->mutex_arr[index])); // function critical section starts
@@ -369,7 +376,7 @@ void *write_file(void *params) {
 
         /*critical section */
         char *new_content = strdup(t_p->r_lines[index]);
-        char *filename = "out.txt";
+        char *filename = output_file;
         int line_no = index;
         printf("content is: %s\n", t_p->r_lines[1]);
         printf("line no: %d\n", line_no);
@@ -417,4 +424,41 @@ void *write_file(void *params) {
             pthread_exit(NULL);
         }
     }
+}
+
+void duplicate_file(char *dest, char *src) {
+    FILE *fptr1, *fptr2;
+    char filename[100], c;
+
+//    printf("Enter the filename to open for reading \n");
+//    scanf("%s", filename);
+
+    // Open one file for reading
+    fptr1 = fopen(src, "r");
+    if (fptr1 == NULL) {
+        printf("Cannot open file %s \n", src);
+        exit(0);
+    }
+//
+//    printf("Enter the filename to open for writing \n");
+//    scanf("%s", filename);
+
+    // Open another file for writing
+    fptr2 = fopen(dest, "w");
+    if (fptr2 == NULL) {
+        printf("Cannot open file %s \n", dest);
+        exit(0);
+    }
+
+    // Read contents from file
+    c = fgetc(fptr1);
+    while (c != EOF) {
+        fputc(c, fptr2);
+        c = fgetc(fptr1);
+    }
+
+    printf("\nContents copied to %s", dest);
+
+    fclose(fptr1);
+    fclose(fptr2);
 }
