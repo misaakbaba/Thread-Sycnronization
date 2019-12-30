@@ -5,6 +5,8 @@
 #include <semaphore.h>
 #include <ctype.h>
 
+#define MAX 256
+
 // Prototype Functions
 void *get_nth_line(void *params);
 
@@ -16,6 +18,8 @@ void *to_upper(void *params);
 
 void *replace(void *params);
 
+void *write_file(void *params);
+
 // Thread arguments
 typedef struct t_params {
     pthread_t tid;
@@ -25,6 +29,7 @@ typedef struct t_params {
     sem_t *mutex_arr;
     int length;
     int thread_number;
+    int *write_ready;
 } t_params;
 //typedef t_params *tParams;
 
@@ -33,9 +38,13 @@ sem_t upper_count_mutex;
 sem_t replace_count_mutex;
 sem_t upper_sem;
 sem_t replace_sem;
+sem_t write_sem;
+sem_t write_count_mutex;
+sem_t write_ready_mutex;
 int line_counter = 0;
 int upper_count = 0;
 int replace_count = 0;
+int write_count = 0;
 //char *read_lines2[20000];
 
 
@@ -52,6 +61,10 @@ int main(int argc, char *argv[]) {
 
     int line_number = measure_text(argv[2]);
     char *read_lines[line_number];
+    int write_ready[line_number];
+    for (int j = 0; j < line_number; ++j) {
+        write_ready[j] = 0;
+    }
 
     sem_t mutex_arr[line_number];
     for (int l = 0; l < line_number; ++l) {
@@ -62,6 +75,9 @@ int main(int argc, char *argv[]) {
     sem_init(&upper_count_mutex, 0, 1);
     sem_init(&replace_count_mutex, 0, 1);
     sem_init(&counter_mutex, 0, 1); //init binary semaphore
+    sem_init(&write_sem, 0, 0);
+    sem_init(&write_count_mutex, 0, 1);
+    sem_init(&write_ready_mutex, 0, 1); //
 
 /* READ THREAD INITIALIZATION */
     t_params read_param[NUM_READ_THREADS];
@@ -81,8 +97,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
-
     /* UPPER THREAD INITIALIZATION */
     t_params upper_param[NUM_UPPER_THREADS];
     pthread_t uppers[NUM_UPPER_THREADS];
@@ -93,13 +107,13 @@ int main(int argc, char *argv[]) {
         upper_param[m].mutex_arr = mutex_arr;
         upper_param[m].id = m;
         upper_param[m].thread_number = NUM_UPPER_THREADS;
+        upper_param[m].write_ready = write_ready;
         rc1 = pthread_create(&uppers[m], NULL, to_upper, (void *) &upper_param[m]);
         if (rc1) {
             printf("ERROR; return code from pthread_create() is %d\n", rc1);
             exit(-1);
         }
     }
-
 
 /* REPLACE THREAD INITIALIZATION */
     t_params replace_param[NUM_REPLACE_THREADS];
@@ -111,6 +125,7 @@ int main(int argc, char *argv[]) {
         replace_param[a].mutex_arr = mutex_arr;
         replace_param[a].id = a;
         replace_param[a].thread_number = NUM_REPLACE_THREADS;
+        replace_param[a].write_ready = write_ready;
         rc2 = pthread_create(&replacer[a], NULL, replace, (void *) &replace_param[a]);
         if (rc2) {
             printf("ERROR; return code from pthread_create() is %d\n", rc2);
@@ -127,10 +142,37 @@ int main(int argc, char *argv[]) {
     for (int b = 0; b < NUM_REPLACE_THREADS; ++b) {
         pthread_join(replacer[b], NULL);
     }
+
+
+
+/* WRITE THREAD INITIALIZATION */
+    t_params write_param[NUM_WRITE_THREADS];
+    pthread_t writer[NUM_WRITE_THREADS];
+    int rc3;
+    for (int k = 0; k < NUM_WRITE_THREADS; ++k) {
+        write_param[k].length = line_number;
+        write_param[k].r_lines = read_lines;
+        write_param[k].mutex_arr = mutex_arr;
+        write_param[k].id = k;
+        write_param[k].thread_number = NUM_WRITE_THREADS;
+        rc3 = pthread_create(&writer[k], NULL, write_file, (void *) &write_param[k]);
+        if (rc3) {
+            printf("ERROR; return code from pthread_create() is %d\n", rc3);
+            exit(-1);
+        }
+    }
+
+//
+    for (int l = 0; l < NUM_WRITE_THREADS; ++l) {
+        pthread_join(writer[l], NULL);
+    }
 //    for (int l = 0; l < 500; ++l) {
 //        printf("index: %d line: %s\n", l, read_lines[l]);
 //    }
 
+//    int sem_val;
+//    sem_getvalue(&write_sem, &sem_val);
+//    printf("semaphore is: %d\n", sem_val);
 
 /* destroy semaphore */
     sem_destroy(&counter_mutex);
@@ -142,9 +184,9 @@ int main(int argc, char *argv[]) {
         sem_destroy(&mutex_arr[j]);
     }
     puts("heloğ");
-    for (int m = 0; m < line_number; ++m) {
-        printf("%s\n", read_lines[m]);
-    }
+//    for (int m = 0; m < line_number; ++m) {
+//        printf("%s\n", read_lines[m]);
+//    }
 //    t_params new;
 //    new.r_lines = read_lines;
 //    to_upper(&new);
@@ -179,7 +221,7 @@ void *get_nth_line(void *params) {
             }
             if (line_no == 0) {
                 flag = 0;
-                printf("Thread %zu read line: %s", t_p->id, line);
+//                printf("Thread %zu read line: %s", t_p->id, line);
 
                 t_p->r_lines[index] = strdup(line);
 
@@ -241,8 +283,15 @@ void *to_upper(void *params) {
         }
         upper[i] = '\0';
         t_p->r_lines[index] = strdup(upper);
-        printf("changed line: %s", upper);
+//        printf("changed line: %s\n", upper);
 //        printf("%s", upper);
+
+        sem_wait(&write_ready_mutex);
+        t_p->write_ready[index]++;
+        if (t_p->write_ready[index] == 2) {
+            sem_post(&write_sem);
+        }
+        sem_post(&write_ready_mutex);
         sem_post(&(t_p->mutex_arr[index]));// function critical section ends.
 
         if (index > t_p->length - t_p->thread_number - 1) { //bitiş şartı
@@ -287,7 +336,14 @@ void *replace(void *params) {
         replace[i - 1] = '\0';
 
         t_p->r_lines[index] = strdup(replace);
-        printf("changed line: %s\n", replace);
+//        printf("changed line: %s\n", replace);
+
+        sem_wait(&write_ready_mutex);
+        t_p->write_ready[index]++;
+        if (t_p->write_ready[index] == 2) {
+            sem_post(&write_sem);
+        }
+        sem_post(&write_ready_mutex);
 
         sem_post(&(t_p->mutex_arr[index])); // function critical section ends
 
@@ -299,3 +355,66 @@ void *replace(void *params) {
     }
 }
 
+void *write_file(void *params) {
+    t_params *t_p = (t_params *) params;
+    int index;
+    while (1) {
+        sem_wait(&write_sem);
+        puts("write is started");
+        sem_wait(&write_count_mutex);
+        index = write_count;
+        sem_wait(&(t_p->mutex_arr[index])); // function critical section starts
+        write_count++;
+        sem_post(&write_count_mutex);
+
+        /*critical section */
+        char *new_content = strdup(t_p->r_lines[index]);
+        char *filename = "out.txt";
+        int line_no = index;
+        printf("content is: %s\n", t_p->r_lines[1]);
+        printf("line no: %d\n", line_no);
+
+        FILE *fptr1, *fptr2;
+        int lno, linectr = 0;
+        char str[MAX], fname[MAX];
+        char newln[MAX], temp[] = "temp.txt";
+
+        fptr1 = fopen(filename, "r");
+        if (!fptr1) {
+            printf("Unable to open the input file!!\n");
+            return 0;
+        }
+        fptr2 = fopen(temp, "w");
+        if (!fptr2) {
+            printf("Unable to open a temporary file to write!!\n");
+            fclose(fptr1);
+            return 0;
+        }
+
+        while (!feof(fptr1)) {
+            strcpy(str, "\0");
+            fgets(str, MAX, fptr1);
+            if (!feof(fptr1)) {
+                if (linectr != line_no) {
+                    fprintf(fptr2, "%s", str);
+                } else {
+                    fprintf(fptr2, "%s", new_content);
+                    fprintf(fptr2, "%c", '\n');
+                }
+                linectr++;
+            }
+        }
+        fclose(fptr1);
+        fclose(fptr2);
+        remove(filename);
+        rename(temp, filename);
+        printf(" Replacement did successfully..!! \n");
+        sem_post(&(t_p->mutex_arr[index]));
+
+        if (index > t_p->length - t_p->thread_number - 1) { //bitiş şartı
+//            printf("thread: %zu is done\n", t_p->id);
+            break;
+            pthread_exit(NULL);
+        }
+    }
+}
