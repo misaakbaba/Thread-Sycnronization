@@ -43,6 +43,7 @@ sem_t replace_sem;
 sem_t write_sem;
 sem_t write_count_mutex;
 sem_t write_ready_mutex;
+sem_t write_mutex;
 int line_counter = 0;
 int upper_count = 0;
 int replace_count = 0;
@@ -84,6 +85,7 @@ int main(int argc, char *argv[]) {
     sem_init(&write_sem, 0, 0);
     sem_init(&write_count_mutex, 0, 1);
     sem_init(&write_ready_mutex, 0, 1); //
+    sem_init(&write_mutex, 0, 1);
 
 /* READ THREAD INITIALIZATION */
     t_params read_param[NUM_READ_THREADS];
@@ -190,9 +192,9 @@ int main(int argc, char *argv[]) {
         sem_destroy(&mutex_arr[j]);
     }
     puts("heloğ");
-//    for (int m = 0; m < line_number; ++m) {
-//        printf("%s\n", read_lines[m]);
-//    }
+    for (int m = 0; m < line_number; ++m) {
+        printf("%s\n", read_lines[m]);
+    }
 //    t_params new;
 //    new.r_lines = read_lines;
 //    to_upper(&new);
@@ -273,6 +275,7 @@ void *to_upper(void *params) {
     /*critical section */
     while (1) {
         sem_wait(&upper_sem);
+
         sem_wait(&upper_count_mutex);
         index = upper_count;
         sem_wait(&(t_p->mutex_arr[index])); // function critical section starts
@@ -314,9 +317,7 @@ void *replace(void *params) {
     int index;
     while (1) {
         /*critical section*/
-        if (replace_count == 0) {
-            sem_wait(&replace_sem);
-        }
+        sem_wait(&replace_sem);
         sem_wait(&replace_count_mutex);
         index = replace_count;
         sem_wait(&(t_p->mutex_arr[index])); // function critical section starts
@@ -366,13 +367,12 @@ void *write_file(void *params) {
     int index;
     while (1) {
 
-        sem_wait(&write_sem);
+//        sem_wait(&write_sem);
 
         sem_wait(&write_count_mutex);
         index = write_count;
         sem_wait(&(t_p->mutex_arr[index])); // function critical section starts
         write_count++;
-        sem_post(&write_count_mutex);
 
         /*critical section */
         char *new_content = strdup(t_p->r_lines[index]);
@@ -385,6 +385,8 @@ void *write_file(void *params) {
         int lno, linectr = 0;
         char str[MAX], fname[MAX];
         char newln[MAX], temp[] = "temp.txt";
+
+//        sem_wait(&write_mutex);
 
         fptr1 = fopen(filename, "r");
         if (!fptr1) {
@@ -417,7 +419,10 @@ void *write_file(void *params) {
         rename(temp, filename);
         printf(" Replacement did successfully..!! \n");
         sem_post(&(t_p->mutex_arr[index]));
+//        sem_post(&write_mutex);
+        sem_post(&write_count_mutex);
 
+//        break;
         if (index > t_p->length - t_p->thread_number - 1) { //bitiş şartı
 //            printf("thread: %zu is done\n", t_p->id);
             break;
